@@ -51,6 +51,15 @@
  */
 #define ACCELERATION_DEFAULT 1
 
+#define DO_TRACE 
+
+#ifdef DO_TRACE
+#define ROMAN_DEBUG(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define ROMAN_DEBUG(...) do {} while(false)
+#endif
+
+#define TRACE(x) ROMAN_DEBUG(#x "\n"); x
 
 /*-************************************
 *  CPU Feature Detection
@@ -85,6 +94,8 @@
 #  define LZ4_FORCE_SW_BITCOUNT
 #endif
 
+
+#include <stdio.h>
 
 /*-************************************
 *  Dependency
@@ -289,6 +300,7 @@ static const int LZ4_minLength = (MFLIMIT+1);
 /*-************************************
 *  Common functions
 **************************************/
+// Returns the index of first non-zero byte.
 static unsigned LZ4_NbCommonBytes (register reg_t val)
 {
     if (LZ4_isLittleEndian()) {
@@ -348,6 +360,9 @@ static unsigned LZ4_NbCommonBytes (register reg_t val)
 }
 
 #define STEPSIZE sizeof(reg_t)
+
+// returns length of the common prefix of memory regions starting at pInp and pMatch.
+// The comparison is done with length "pInLimit - pIn".
 static unsigned LZ4_count(const BYTE* pIn, const BYTE* pMatch, const BYTE* pInLimit)
 {
     const BYTE* const pStart = pIn;
@@ -407,13 +422,18 @@ static U32 LZ4_hash4(U32 sequence, tableType_t const tableType)
         return ((sequence * 2654435761U) >> ((MINMATCH*8)-LZ4_HASHLOG));
 }
 
+// Returns the index inside hashTable based on the offset type (16bits, 32bits).
+// Can be in range 4K or 8K.
 static U32 LZ4_hash5(U64 sequence, tableType_t const tableType)
 {
     static const U64 prime5bytes = 889523592379ULL;
     static const U64 prime8bytes = 11400714785074694791ULL;
+
+    // LZ4_HASHLOG = 12, for small inputs hashLog is 13, big inputs = 12.
+    // For small inputs 4K uint32 table can accomodate 8K (1<<13) entries.
     const U32 hashLog = (tableType == byU16) ? LZ4_HASHLOG+1 : LZ4_HASHLOG;
     if (LZ4_isLittleEndian())
-        return (U32)(((sequence << 24) * prime5bytes) >> (64 - hashLog));
+        return (U32)(((sequence << 24) * prime5bytes) >> (64 - hashLog));  // leave high hashLog bits
     else
         return (U32)(((sequence >> 24) * prime8bytes) >> (64 - hashLog));
 }
@@ -487,6 +507,8 @@ FORCE_INLINE int LZ4_compress_generic(
 
     /* Init conditions */
     if ((U32)inputSize > (U32)LZ4_MAX_INPUT_SIZE) return 0;   /* Unsupported inputSize, too large (or negative) */
+    ROMAN_DEBUG("dict %d dictIssue %d matchlimit %ld\n", dict, dictIssue, matchlimit - ip);
+
     switch(dict)
     {
     case noDict:
@@ -506,6 +528,10 @@ FORCE_INLINE int LZ4_compress_generic(
     if ((tableType == byU16) && (inputSize>=LZ4_64Klimit)) return 0;   /* Size too large (not within 64K limit) */
     if (inputSize<LZ4_minLength) goto _last_literals;                  /* Input too small, no compression (all literals) */
 
+    // there are different table types based in the architecture and the input size.
+    // For 64bit it can be either by16 or by32 and hash table stores offset position compared to
+    // 'base'.
+
     /* First Byte */
     LZ4_putPosition(ip, cctx->hashTable, tableType, base);
     ip++; forwardH = LZ4_hashPosition(ip, tableType);
@@ -517,7 +543,10 @@ FORCE_INLINE int LZ4_compress_generic(
         BYTE* token;
 
         /* Find a match */
-        {   const BYTE* forwardIp = ip;
+        {   // This loop searches for 4 bytes matches in hashtable.
+            // Every time it advances by step ? which is increased by 1 every 64
+            // (>> LZ4_skipTrigger) iterations.
+            const BYTE* forwardIp = ip;
             unsigned step = 1;
             unsigned searchMatchNb = acceleration << LZ4_skipTrigger;
             do {
@@ -526,9 +555,11 @@ FORCE_INLINE int LZ4_compress_generic(
                 forwardIp += step;
                 step = (searchMatchNb++ >> LZ4_skipTrigger);
 
-                if (unlikely(forwardIp > mflimit)) goto _last_literals;
+                if (unlikely(forwardIp > mflimit)) { TRACE(goto _last_literals); }
 
                 match = LZ4_getPositionOnHash(h, cctx->hashTable, tableType, base);
+                ROMAN_DEBUG("step %d, h %d\n", step, h);
+
                 if (dict==usingExtDict) {
                     if (match < (const BYTE*)source) {
                         refDelta = dictDelta;
@@ -539,6 +570,9 @@ FORCE_INLINE int LZ4_compress_generic(
                 }   }
                 forwardH = LZ4_hashPosition(forwardIp, tableType);
                 LZ4_putPositionOnHash(ip, h, cctx->hashTable, tableType, base);
+                ROMAN_DEBUG("forwardH %d read32L %d read32R %d match %ld\n",
+                        forwardH, LZ4_read32(match+refDelta), LZ4_read32(ip),
+                        match - base);
 
             } while ( ((dictIssue==dictSmall) ? (match < lowRefLimit) : 0)
                 || ((tableType==byU16) ? 0 : (match + MAX_DISTANCE < ip))
@@ -546,7 +580,9 @@ FORCE_INLINE int LZ4_compress_generic(
         }
 
         /* Catch up */
-        while (((ip>anchor) & (match+refDelta > lowLimit)) && (unlikely(ip[-1]==match[refDelta-1]))) { ip--; match--; }
+        while (((ip>anchor) & (match+refDelta > lowLimit)) && (unlikely(ip[-1]==match[refDelta-1]))) {
+          TRACE(ip--; match--;);
+        }
 
         /* Encode Literals */
         {   unsigned const litLength = (unsigned)(ip - anchor);
@@ -554,6 +590,8 @@ FORCE_INLINE int LZ4_compress_generic(
             if ((outputLimited) &&  /* Check output buffer overflow */
                 (unlikely(op + litLength + (2 + 1 + LASTLITERALS) + (litLength/255) > olimit)))
                 return 0;
+            // RUN_MASK = 15.
+            // Encode length.
             if (litLength >= RUN_MASK) {
                 int len = (int)litLength-RUN_MASK;
                 *token = (RUN_MASK<<ML_BITS);
@@ -561,14 +599,17 @@ FORCE_INLINE int LZ4_compress_generic(
                 *op++ = (BYTE)len;
             }
             else *token = (BYTE)(litLength<<ML_BITS);
+            ROMAN_DEBUG("litLength %d\n", litLength);
 
             /* Copy Literals */
-            LZ4_wildCopy(op, anchor, op+litLength);
+            LZ4_wildCopy(op /*dest*/, anchor, op+litLength);
             op+=litLength;
         }
 
 _next_match:
         /* Encode Offset */
+        ROMAN_DEBUG("LZ4_writeLE16 %d\n", (U16)(ip-match));
+
         LZ4_writeLE16(op, (U16)(ip-match)); op+=2;
 
         /* Encode MatchLength */
@@ -588,6 +629,7 @@ _next_match:
                 }
             } else {
                 matchCode = LZ4_count(ip+MINMATCH, match+MINMATCH, matchlimit);
+                ROMAN_DEBUG("matchlimit %ld matchCode %d\n", matchlimit - base, matchCode);
                 ip += MINMATCH + matchCode;
             }
 
