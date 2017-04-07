@@ -45,6 +45,7 @@ You can contact the author at :
 #  pragma warning(disable : 4127)        /* disable: C4127: conditional expression is constant */
 #endif
 
+#include <stdio.h>
 
 /*-************************************
 *  Memory routines
@@ -64,6 +65,15 @@ You can contact the author at :
 #include "lz4hc.h"
 #define XXH_STATIC_LINKING_ONLY
 #include "xxhash.h"
+
+
+#define DO_TRACE
+
+#ifdef DO_TRACE
+#define ROMAN_DEBUG(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define ROMAN_DEBUG(...) do {} while(false)
+#endif
 
 
 /*-************************************
@@ -759,10 +769,16 @@ LZ4F_errorCode_t LZ4F_createDecompressionContext(LZ4F_dctx** LZ4F_decompressionC
     LZ4F_dctx* const dctxPtr = (LZ4F_dctx*)ALLOCATOR(sizeof(LZ4F_dctx));
     if (dctxPtr==NULL) return err0r(LZ4F_ERROR_GENERIC);
 
+    ROMAN_DEBUG("LZ4F_createDecompressionContext\n");
+
     dctxPtr->version = versionNumber;
     *LZ4F_decompressionContextPtr = dctxPtr;
     return LZ4F_OK_NoError;
 }
+
+extern long roman_litLen;
+extern long roman_matchLen;
+extern long roman_matchCnt;
 
 LZ4F_errorCode_t LZ4F_freeDecompressionContext(LZ4F_dctx* const dctxPtr)
 {
@@ -773,6 +789,9 @@ LZ4F_errorCode_t LZ4F_freeDecompressionContext(LZ4F_dctx* const dctxPtr)
       FREEMEM(dctxPtr->tmpOutBuffer);
       FREEMEM(dctxPtr);
     }
+    ROMAN_DEBUG("LZ4F_freeDecompressionContext: litLen %ld, matchLen %ld, matchCnt %ld\n", roman_litLen,
+                roman_matchLen, roman_matchCnt);
+
     return result;
 }
 

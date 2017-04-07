@@ -51,7 +51,7 @@
  */
 #define ACCELERATION_DEFAULT 1
 
-#define DO_TRACE 
+#define DO_TRACE
 
 #ifdef DO_TRACE
 #define ROMAN_DEBUG(...) fprintf(stderr, __VA_ARGS__)
@@ -1119,6 +1119,10 @@ int LZ4_saveDict (LZ4_stream_t* LZ4_dict, char* safeBuffer, int dictSize)
 
 
 
+long roman_litLen = 0;
+long roman_matchLen = 0;
+long roman_matchCnt = 0;
+
 /*-*****************************
 *  Decompression functions
 *******************************/
@@ -1186,6 +1190,8 @@ FORCE_INLINE int LZ4_decompress_generic(
 
         /* copy literals */
         cpy = op+length;
+        roman_litLen += length;
+
         if ( ((endOnInput) && ((cpy>(partialDecoding?oexit:oend-MFLIMIT)) || (ip+length>iend-(2+1+LASTLITERALS))) )
             || ((!endOnInput) && (cpy>oend-WILDCOPYLENGTH)) )
         {
@@ -1222,6 +1228,9 @@ FORCE_INLINE int LZ4_decompress_generic(
             if ((safeDecode) && unlikely((uptrval)(op)+length<(uptrval)op)) goto _output_error;   /* overflow detection */
         }
         length += MINMATCH;
+
+        roman_matchLen += length;
+        ++roman_matchCnt;
 
         /* check external dictionary */
         if ((dict==usingExtDict) && (match < lowPrefix)) {

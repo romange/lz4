@@ -814,6 +814,8 @@ static unsigned long long LZ4IO_decompressLZ4F(dRess_t ress, FILE* srcFile, FILE
             /* Decode Input (at least partially) */
             size_t remaining = readSize - pos;
             decodedBytes = ress.dstBufferSize;
+            DISPLAY("decodedBytes %ld remaining %ld\n", decodedBytes, remaining);
+
             nextToLoad = LZ4F_decompress(ress.dCtx, ress.dstBuffer, &decodedBytes, (char*)(ress.srcBuffer)+pos, &remaining, NULL);
             if (LZ4F_isError(nextToLoad)) EXM_THROW(66, "Decompression error : %s", LZ4F_getErrorName(nextToLoad));
             pos += remaining;
