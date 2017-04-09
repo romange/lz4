@@ -1,20 +1,107 @@
-OS := $(shell uname)
+# ##########################################################################
+# Copyright (c) 2016-present, Yann Collet, Facebook, Inc.
+# All rights reserved.
+#
+# This Makefile is validated for Linux, macOS, *BSD, Hurd, Solaris, MSYS2 targets
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree. An additional grant
+# of patent rights can be found in the PATENTS file in the same directory.
+# ##########################################################################
 
-ifeq ($(OS),Linux)
-  OUTPUT32  = lz4demo32
-  OUTPUT64  = lz4demo64
-else
-  OUTPUT32  = LZ4Demo32.exe
-  OUTPUT64  = LZ4Demo64.exe
-endif
+# Version numbers
+LIBVER_MAJOR := 5
+LIBVER_MINOR := 6
+LIBVER_PATCH := 0
+LIBVER := 560
+VERSION?= $(LIBVER)
 
-all: lz4demo64 lz4demo32 
+CPPFLAGS+= -I.
+CFLAGS  ?= -O3
+DEBUGFLAGS = -g -Wall -Wextra -Wshadow \
+           -Wstrict-aliasing=1 -Wswitch-enum -Wdeclaration-after-statement \
+           -Wstrict-prototypes -Wundef -Wpointer-arith -Wformat-security
+CFLAGS  += $(DEBUGFLAGS)
+FLAGS    = $(CPPFLAGS) $(CFLAGS)4hc
 
-lz4demo64: lz4.c lz4.h lz4hc.c lz4hc.h bench.c lz4demo.c
-	gcc      -O3 -I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration lz4hc.c lz4.c bench.c lz4demo.c -o $(OUTPUT64)
 
-lz4demo32: lz4.c lz4.h lz4hc.c lz4hc.h bench.c lz4demo.c
-	gcc -m32 -Os -march=native -I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration lz4hc.c lz4.c bench.c lz4demo.c -o $(OUTPUT32)
+LZ4HC_FILES := lz4hc.c
+
+
+LZ4HC_OBJ   := $(patsubst %.c,%.o,$(LZ4HC_FILES))
+
+SONAME_FLAGS = -Wl,-soname=liblz4hc.$(SHARED_EXT).$(LIBVER_MAJOR)
+SHARED_EXT = so
+SHARED_EXT_MAJOR = $(SHARED_EXT).$(LIBVER_MAJOR)
+SHARED_EXT_VER = $(SHARED_EXT).$(LIBVER)
+
+
+LIBLZ4HC = liblz4hc.$(SHARED_EXT_VER)
+
+
+.PHONY: all clean install uninstall
+
+all: lib
+
+liblz4hc.a: ARFLAGS = rcs
+liblz4hc.a: $(LZ4HC_OBJ)
+	@echo compiling static library
+	@$(AR) $(ARFLAGS) $@ $^
+
+lib: liblz4hc.a
 
 clean:
-	rm -f core *.o $(OUTPUT32) $(OUTPUT64)
+	@$(RM) core *.o *.a *.gcda *.$(SHARED_EXT) *.$(SHARED_EXT).* liblz4hc.pc
+	@echo Cleaning library completed
+
+#-----------------------------------------------------------------------------
+# make install is validated only for Linux, OSX, BSD, Hurd and Solaris targets
+#-----------------------------------------------------------------------------
+ifneq (,$(filter $(shell uname),Linux Darwin GNU/kFreeBSD GNU OpenBSD FreeBSD NetBSD DragonFly SunOS))
+
+ifneq (,$(filter $(shell uname),SunOS))
+INSTALL ?= ginstall
+else
+INSTALL ?= install
+endif
+
+PREFIX     ?= /usr/local
+DESTDIR    ?=
+LIBDIR     ?= $(PREFIX)/lib
+INCLUDEDIR ?= $(PREFIX)/include
+
+ifneq (,$(filter $(shell uname),OpenBSD FreeBSD NetBSD DragonFly))
+PKGCONFIGDIR ?= $(PREFIX)/libdata/pkgconfig
+else
+PKGCONFIGDIR ?= $(LIBDIR)/pkgconfig
+endif
+
+INSTALL_LIB  ?= $(INSTALL) -m 755
+INSTALL_DATA ?= $(INSTALL) -m 644
+
+
+liblz4hc.pc:
+liblz4hc.pc: liblz4hc.pc.in
+	@echo creating pkgconfig
+	@sed -e 's|@PREFIX@|$(PREFIX)|' \
+             -e 's|@LIBDIR@|$(LIBDIR)|' \
+             -e 's|@INCLUDEDIR@|$(INCLUDEDIR)|' \
+             -e 's|@VERSION@|$(VERSION)|' \
+             $< >$@
+
+install: liblz4hc.a liblz4hc liblz4hc.pc
+	@$(INSTALL) -d -m 755 $(DESTDIR)$(PKGCONFIGDIR)/ $(DESTDIR)$(INCLUDEDIR)/
+	@$(INSTALL_DATA) liblz4hc.pc $(DESTDIR)$(PKGCONFIGDIR)/
+	@echo Installing libraries
+	@$(INSTALL_LIB) liblz4hc.a $(DESTDIR)$(LIBDIR)
+
+	@echo Installing includes
+	@$(INSTALL_DATA) lz4hc.h $(DESTDIR)$(INCLUDEDIR)
+
+uninstall:
+	@$(RM) $(DESTDIR)$(LIBDIR)/liblz4hc.a
+	@$(RM) $(DESTDIR)$(PKGCONFIGDIR)/liblz4hc.pc
+	@$(RM) $(DESTDIR)$(INCLUDEDIR)/lz4hc.h
+	@echo zstd libraries successfully uninstalled
+
+endif
