@@ -204,7 +204,10 @@ typedef struct
 #define HASH_POINTER(p)		(HashTable[HASH_VALUE(p)] + base)
 #define DELTANEXT(p)		chainTable[(size_t)(p) & MAXD_MASK]
 #define GETNEXT(p)			((p) - (size_t)DELTANEXT(p))
-#define ADD_HASH(p)			{ size_t delta = (p) - HASH_POINTER(p); if (delta>MAX_DISTANCE) delta = MAX_DISTANCE; DELTANEXT(p) = (U16)delta; HashTable[HASH_VALUE(p)] = (p) - base; }
+#define ADD_HASH(p)			{ size_t delta = (p) - HASH_POINTER(p);  \
+    if (delta>MAX_DISTANCE) delta = MAX_DISTANCE;  \
+    DELTANEXT(p) = (U16)delta;  \
+    HashTable[HASH_VALUE(p)] = (p) - base; }
 
 
 //**************************************
@@ -276,7 +279,7 @@ inline static int LZ4_NbCommonBytes (register U32 val)
 #endif
 
 
-inline static int LZ4HC_Init (LZ4HC_Data_Structure* hc4, const BYTE* base)
+static int LZ4HC_Init (LZ4HC_Data_Structure* hc4, const BYTE* base)
 {
 	MEM_INIT((void*)hc4->hashTable, 0, sizeof(hc4->hashTable));
 	MEM_INIT(hc4->chainTable, 0xFF, sizeof(hc4->chainTable));
@@ -286,7 +289,7 @@ inline static int LZ4HC_Init (LZ4HC_Data_Structure* hc4, const BYTE* base)
 }
 
 
-inline static void* LZ4HC_Create (const BYTE* base)
+static void* LZ4HC_Create (const BYTE* base)
 {
 	void* hc4 = ALLOCATOR(sizeof(LZ4HC_Data_Structure));
 
@@ -295,7 +298,7 @@ inline static void* LZ4HC_Create (const BYTE* base)
 }
 
 
-inline static int LZ4HC_Free (void** LZ4HC_Data)
+static int LZ4HC_Free (void** LZ4HC_Data)
 {
 	FREEMEM(*LZ4HC_Data);
 	*LZ4HC_Data = NULL;
@@ -303,7 +306,7 @@ inline static int LZ4HC_Free (void** LZ4HC_Data)
 }
 
 
-inline static void LZ4HC_Insert (LZ4HC_Data_Structure* hc4, const BYTE* ip)
+static void LZ4HC_Insert (LZ4HC_Data_Structure* hc4, const BYTE* ip)
 {
 	U16*   chainTable = hc4->chainTable;
 	HTYPE* HashTable  = hc4->hashTable;
@@ -317,7 +320,7 @@ inline static void LZ4HC_Insert (LZ4HC_Data_Structure* hc4, const BYTE* ip)
 }
 
 
-inline static int LZ4HC_InsertAndFindBestMatch (LZ4HC_Data_Structure* hc4, const BYTE* ip, const BYTE* const matchlimit, const BYTE** matchpos)
+static int LZ4HC_InsertAndFindBestMatch (LZ4HC_Data_Structure* hc4, const BYTE* ip, const BYTE* const matchlimit, const BYTE** matchpos)
 {
 	U16* const chainTable = hc4->chainTable;
 	HTYPE* const HashTable = hc4->hashTable;
@@ -332,26 +335,27 @@ inline static int LZ4HC_InsertAndFindBestMatch (LZ4HC_Data_Structure* hc4, const
 	while ((ref > (ip-MAX_DISTANCE)) && (nbAttempts))
 	{
 		nbAttempts--;
-		if (*(ref+ml) == *(ip+ml))
-		if (*(U32*)ref == *(U32*)ip)
-		{
-			const BYTE* reft = ref+MINMATCH;
-			const BYTE* ipt = ip+MINMATCH;
+		if (*(ref+ml) == *(ip+ml)) {
+  		if (*(U32*)ref == *(U32*)ip)
+  		{
+  			const BYTE* reft = ref+MINMATCH;
+  			const BYTE* ipt = ip+MINMATCH;
 
-			while (ipt<matchlimit-(STEPSIZE-1))
-			{
-				UARCH diff = AARCH(reft) ^ AARCH(ipt);
-				if (!diff) { ipt+=STEPSIZE; reft+=STEPSIZE; continue; }
-				ipt += LZ4_NbCommonBytes(diff);
-				goto _endCount;
-			}
-			if (LZ4_ARCH64) if ((ipt<(matchlimit-3)) && (A32(reft) == A32(ipt))) { ipt+=4; reft+=4; }
-			if ((ipt<(matchlimit-1)) && (A16(reft) == A16(ipt))) { ipt+=2; reft+=2; }
-			if ((ipt<matchlimit) && (*reft == *ipt)) ipt++;
-_endCount:
+  			while (ipt<matchlimit-(STEPSIZE-1))
+  			{
+  				UARCH diff = AARCH(reft) ^ AARCH(ipt);
+  				if (!diff) { ipt+=STEPSIZE; reft+=STEPSIZE; continue; }
+  				ipt += LZ4_NbCommonBytes(diff);
+  				goto _endCount;
+  			}
+  			if (LZ4_ARCH64) if ((ipt<(matchlimit-3)) && (A32(reft) == A32(ipt))) { ipt+=4; reft+=4; }
+  			if ((ipt<(matchlimit-1)) && (A16(reft) == A16(ipt))) { ipt+=2; reft+=2; }
+  			if ((ipt<matchlimit) && (*reft == *ipt)) ipt++;
+  _endCount:
 
-			if (ipt-ip > ml) { ml = ipt-ip; *matchpos = ref; }
-		}
+  			if (ipt-ip > ml) { ml = ipt-ip; *matchpos = ref; }
+  		}
+    }
 		ref = GETNEXT(ref);
 	}
 
