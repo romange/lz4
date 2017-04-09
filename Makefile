@@ -89,9 +89,8 @@ liblz4hc.pc: liblz4hc.pc.in
              -e 's|@VERSION@|$(VERSION)|' \
              $< >$@
 
-install: liblz4hc.a liblz4hc liblz4hc.pc
+install: liblz4hc.a
 	@$(INSTALL) -d -m 755 $(DESTDIR)$(PKGCONFIGDIR)/ $(DESTDIR)$(INCLUDEDIR)/
-	@$(INSTALL_DATA) liblz4hc.pc $(DESTDIR)$(PKGCONFIGDIR)/
 	@echo Installing libraries
 	@$(INSTALL_LIB) liblz4hc.a $(DESTDIR)$(LIBDIR)
 
