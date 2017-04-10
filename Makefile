@@ -17,8 +17,8 @@ LIBVER := 560
 VERSION?= $(LIBVER)
 
 CPPFLAGS+= -I.
-CFLAGS  ?= -O3
-DEBUGFLAGS = -g -Wall -Wextra -Wshadow \
+CFLAGS  ?= -O0
+DEBUGFLAGS = -g -Wall -Wextra -Wshadow -DDEBUG \
            -Wstrict-aliasing=1 -Wswitch-enum -Wdeclaration-after-statement \
            -Wstrict-prototypes -Wundef -Wpointer-arith -Wformat-security
 CFLAGS  += $(DEBUGFLAGS)

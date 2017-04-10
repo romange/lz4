@@ -82,6 +82,7 @@
 //**************************************
 #include <stdlib.h>   // calloc, free
 #include <string.h>   // memset, memcpy
+#include <stdio.h>
 #include "lz4hc.h"
 
 #define ALLOCATOR(s) calloc(1,s)
@@ -204,11 +205,12 @@ typedef struct
 #define HASH_POINTER(p)		(HashTable[HASH_VALUE(p)] + base)
 #define DELTANEXT(p)		chainTable[(size_t)(p) & MAXD_MASK]
 #define GETNEXT(p)			((p) - (size_t)DELTANEXT(p))
-#define ADD_HASH(p)			{ size_t delta = (p) - HASH_POINTER(p);  \
-    if (delta>MAX_DISTANCE) delta = MAX_DISTANCE;  \
-    DELTANEXT(p) = (U16)delta;  \
-    HashTable[HASH_VALUE(p)] = (p) - base; }
 
+
+static const BYTE* HashPointer(LZ4HC_Data_Structure* hc4, const BYTE* p) {
+  // hashTable contains deltas upon base.
+  return hc4->base + hc4->hashTable[HASH_VALUE(p)];
+}
 
 //**************************************
 // Private functions
@@ -278,23 +280,19 @@ inline static int LZ4_NbCommonBytes (register U32 val)
 
 #endif
 
-
-static int LZ4HC_Init (LZ4HC_Data_Structure* hc4, const BYTE* base)
-{
-	MEM_INIT((void*)hc4->hashTable, 0, sizeof(hc4->hashTable));
-	MEM_INIT(hc4->chainTable, 0xFF, sizeof(hc4->chainTable));
-	hc4->nextToUpdate = base + LZ4_ARCH64;
-	hc4->base = base;
-	return 1;
-}
+#define TRACE(...) fprintf(stderr, __VA_ARGS__)
 
 
 static void* LZ4HC_Create (const BYTE* base)
 {
-	void* hc4 = ALLOCATOR(sizeof(LZ4HC_Data_Structure));
+	LZ4HC_Data_Structure* hc4 = (LZ4HC_Data_Structure*)ALLOCATOR(sizeof(LZ4HC_Data_Structure));
 
-	LZ4HC_Init (hc4, base);
-	return hc4;
+  MEM_INIT((void*)hc4->hashTable, 0, sizeof(hc4->hashTable));
+  MEM_INIT(hc4->chainTable, 0xFF, sizeof(hc4->chainTable));
+  hc4->nextToUpdate = base + 1;  // why 1?
+  hc4->base = base;
+
+  return hc4;
 }
 
 
@@ -310,37 +308,59 @@ static void LZ4HC_Insert (LZ4HC_Data_Structure* hc4, const BYTE* ip)
 {
 	U16*   chainTable = hc4->chainTable;
 	HTYPE* HashTable  = hc4->hashTable;
-	INITBASE(base,hc4->base);
+  const BYTE* const base = hc4->base;
 
+  // ip actually is not put into hash table.
 	while(hc4->nextToUpdate < ip)
 	{
-		ADD_HASH(hc4->nextToUpdate);
+    // for uninitialized values (0) of hashtable, delta is 0, because then HashPointer(.., x) = x.
+    size_t delta = hc4->nextToUpdate - HashPointer(hc4, hc4->nextToUpdate);
+    if (delta>MAX_DISTANCE)
+      delta = MAX_DISTANCE;
+
+    // chainTable maps (matched)pointer into delta distance to next collision.
+    // maximum distance allowed is 64K - 1 (U16).
+    // So just accessing it is wrong. It's valid only if it came from hashtable
+    // (there was a match), or it came from the previous pointer in the chain.
+    // The end of chain - 0.
+    chainTable[(size_t)hc4->nextToUpdate & MAXD_MASK] = (U16)delta;
+    HashTable[HASH_VALUE(hc4->nextToUpdate)] = hc4->nextToUpdate - base;
+
 		hc4->nextToUpdate++;
 	}
 }
 
 
-static int LZ4HC_InsertAndFindBestMatch (LZ4HC_Data_Structure* hc4, const BYTE* ip, const BYTE* const matchlimit, const BYTE** matchpos)
+static int LZ4HC_InsertAndFindBestMatch (LZ4HC_Data_Structure* hc4, const BYTE* ip,
+                                         const BYTE* const matchlimit, const BYTE** matchpos)
 {
 	U16* const chainTable = hc4->chainTable;
-	HTYPE* const HashTable = hc4->hashTable;
 	const BYTE* ref;
-	INITBASE(base,hc4->base);
-	int nbAttempts=MAX_NB_ATTEMPTS;
+  int pos = ip - hc4->base;
+  int nbAttempts=MAX_NB_ATTEMPTS;
 	int ml=0;
 
-	// HC4 match finder
-	LZ4HC_Insert(hc4, ip);
-	ref = HASH_POINTER(ip);
-	while ((ref > (ip-MAX_DISTANCE)) && (nbAttempts))
+  // HC4 match finder
+  LZ4HC_Insert(hc4, ip);
+	ref = HashPointer(hc4, ip);
+
+  TRACE("IPPOS %ld REFPOS %ld, limit %ld \n", pos, ref - hc4->base,
+                                              matchlimit - hc4->base);
+
+	while ((MAX_DISTANCE > ip-ref) && nbAttempts)
 	{
 		nbAttempts--;
+
+    // Check greadily if the current possible match can be improved by checking the byte beyond
+    // ml. What happens if ml equals to matchLimit? Maybe it's a possible bug fixed
+    // in the later versions.
 		if (*(ref+ml) == *(ip+ml)) {
   		if (*(U32*)ref == *(U32*)ip)
   		{
   			const BYTE* reft = ref+MINMATCH;
   			const BYTE* ipt = ip+MINMATCH;
 
+        // Advances ip, reft as long as their values are equal upto matchLimit.
   			while (ipt<matchlimit-(STEPSIZE-1))
   			{
   				UARCH diff = AARCH(reft) ^ AARCH(ipt);
@@ -353,9 +373,11 @@ static int LZ4HC_InsertAndFindBestMatch (LZ4HC_Data_Structure* hc4, const BYTE* 
   			if ((ipt<matchlimit) && (*reft == *ipt)) ipt++;
   _endCount:
 
+        // Take the best match and remember it in ml, *matchpos.
   			if (ipt-ip > ml) { ml = ipt-ip; *matchpos = ref; }
   		}
     }
+    // take the next possible match via chaintable.
 		ref = GETNEXT(ref);
 	}
 
@@ -363,7 +385,9 @@ static int LZ4HC_InsertAndFindBestMatch (LZ4HC_Data_Structure* hc4, const BYTE* 
 }
 
 
-inline static int LZ4HC_InsertAndGetWiderMatch (LZ4HC_Data_Structure* hc4, const BYTE* ip, const BYTE* startLimit, const BYTE* matchlimit, int longest, const BYTE** matchpos, const BYTE** startpos)
+inline static int LZ4HC_InsertAndGetWiderMatch (LZ4HC_Data_Structure* hc4, const BYTE* ip,
+  const BYTE* startLimit, const BYTE* matchlimit, int longest,
+  const BYTE** matchpos, const BYTE** startpos)
 {
 	U16* const  chainTable = hc4->chainTable;
 	HTYPE* const HashTable = hc4->hashTable;
@@ -375,6 +399,9 @@ inline static int LZ4HC_InsertAndGetWiderMatch (LZ4HC_Data_Structure* hc4, const
 	// First Match
 	LZ4HC_Insert(hc4, ip);
 	ref = HASH_POINTER(ip);
+
+  TRACE("WIDER IPPOS %ld REFPOS %ld, limit %ld \n", ip - hc4->base, ref - hc4->base,
+                                              matchlimit - hc4->base);
 
 	while ((ref > ip-MAX_DISTANCE) && (ref >= hc4->base) && (nbAttempts))
 	{
@@ -478,6 +505,7 @@ int LZ4_compressHCCtx(LZ4HC_Data_Structure* ctx,
 	{
 		ml = LZ4HC_InsertAndFindBestMatch (ctx, ip, matchlimit, (&ref));
 		if (!ml) { ip++; continue; }
+    TRACE("Found ml %d %ld for ip %ld\n", ml, ref - ctx->base, ip - ctx->base);
 
 		// saved, in case we would skip too much
 		start0 = ip;
@@ -494,7 +522,7 @@ _Search2:
 			LZ4_encodeSequence(&ip, &op, &anchor, ml, ref);
 			continue;
 		}
-
+    TRACE("Found ml2 %d\n", ml2);
 		if (start0 < ip)
 		{
 			if (start2 < ip + ml0)   // empirical
