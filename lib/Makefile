@@ -83,8 +83,8 @@ all32: all
 liblz4.a: *.c
 ifeq ($(BUILD_STATIC),yes)
 	@echo compiling static library
-	@$(CC) $(CPPFLAGS) $(CFLAGS) -c $^
-	@$(AR) rcs $@ *.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $^
+	$(AR) rcs $@ *.o
 endif
 
 $(LIBLZ4): *.c

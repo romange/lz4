@@ -128,8 +128,10 @@ FORCE_INLINE void LZ4HC_Insert (LZ4HC_CCtx_internal* hc4, const BYTE* ip)
     hc4->nextToUpdate = target;
 }
 
+#define TRACE2(...) fprintf(stderr, __VA_ARGS__)
 
-FORCE_INLINE int LZ4HC_InsertAndFindBestMatch (LZ4HC_CCtx_internal* hc4,   /* Index table will be updated */
+
+static int LZ4HC_InsertAndFindBestMatch (LZ4HC_CCtx_internal* hc4,   /* Index table will be updated */
                                                const BYTE* ip, const BYTE* const iLimit,
                                                const BYTE** matchpos,
                                                const int maxNbAttempts)
@@ -143,10 +145,15 @@ FORCE_INLINE int LZ4HC_InsertAndFindBestMatch (LZ4HC_CCtx_internal* hc4,   /* In
     U32 matchIndex;
     int nbAttempts=maxNbAttempts;
     size_t ml=0;
+    int pos = ip - hc4->base;
+
 
     /* HC4 match finder */
     LZ4HC_Insert(hc4, ip);
     matchIndex = HashTable[LZ4HC_hashPtr(ip)];
+    TRACE2("IPPOS %d matchIndex %d, limit %ld \n", pos - 64 KB, matchIndex, iLimit - ip);
+
+
 
     while ((matchIndex>=lowLimit) && (nbAttempts)) {
         nbAttempts--;
@@ -159,6 +166,7 @@ FORCE_INLINE int LZ4HC_InsertAndFindBestMatch (LZ4HC_CCtx_internal* hc4,   /* In
                 if (mlt > ml) { ml = mlt; *matchpos = match; }
             }
         } else {
+            TRACE2("LZ4HC_InsertAndFindBestMatch DICT\n");
             const BYTE* const match = dictBase + matchIndex;
             if (LZ4_read32(match) == LZ4_read32(ip)) {
                 size_t mlt;
@@ -206,6 +214,8 @@ FORCE_INLINE int LZ4HC_InsertAndGetWiderMatch (
     while ((matchIndex>=lowLimit) && (nbAttempts)) {
         nbAttempts--;
         if (matchIndex >= dictLimit) {
+            TRACE2("delta %d matchIndex %d, compare %ld vs %d\n", delta, matchIndex,
+                   (iLowLimit - base) + longest, matchIndex -delta + longest);
             const BYTE* matchPtr = base + matchIndex;
             if (*(iLowLimit + longest) == *(matchPtr - delta + longest)) {
                 if (LZ4_read32(matchPtr) == LZ4_read32(ip)) {
@@ -490,8 +500,8 @@ static int LZ4HC_getSearchNum(int compressionLevel)
 {
     switch (compressionLevel) {
         default: return 0; /* unused */
-        case 11: return 128; 
-        case 12: return 1<<10; 
+        case 11: return 128;
+        case 12: return 1<<10;
     }
 }
 
